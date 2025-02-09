@@ -1,0 +1,589 @@
+<!--
+MIT License
+
+Copyright (c) 2020 -  R74
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-->
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SCP作者検索</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bulma/0.9.4/css/bulma.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma-extensions@4.0.0/dist/css/bulma-extensions.min.css" />
+    <style>
+      .license-text { white-space: pre-line; }
+      .checkbox-container {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        margin-top: 1rem;
+      }
+      #error-container {
+        margin-top: 1rem;
+        color: #ff3860;
+      }
+      #url-form {
+        word-break: break-all;
+        background: #f5f5f5;
+        padding: 1rem;
+        border-radius: 4px;
+      }
+      .box { margin-bottom: 1rem; }
+    </style>
+  </head>
+  <body>
+    <section class="section p-0">
+      <div class="container">
+        <form id="license-form" class="mb-5">
+          <div class="field">
+            <div class="control">
+              <textarea
+                class="textarea"
+                id="license-input"
+                placeholder="http://scp-jp.wikidot.com/scp-2000-jp&#10;scp-3000-jp&#10;https://scp-wiki.wikidot.com/scp-999"
+              ></textarea>
+            </div>
+          </div>
+
+          <div class="field is-grouped is-align-items-center is-flex-wrap-wrap">
+            <div class="control pt-1">
+              <button class="button is-info" type="submit">検索</button>
+            </div>
+            <div class="control pt-1">
+              <button class="button is-link" id="show-html" type="button" disabled>
+                HTMLソース
+              </button>
+            </div>
+            <div class="control pt-1">
+              <button class="button is-link" id="show-rich-text" type="button" disabled>
+                テキスト
+              </button>
+            </div>
+            <div class="control pt-1">
+              <button class="button is-link" id="gen-url" type="button">
+                URL生成(5つ迄)
+              </button>
+            </div>
+          </div>
+
+          <div class="checkbox-container">
+            <div class="control">
+              <input
+                id="toggle-original"
+                type="checkbox"
+                name="toggle-original"
+                class="switch"
+                checked
+              />
+              <label for="toggle-original">原語版情報を表示</label>
+            </div>
+            <div class="control">
+              <input
+                id="toggle-year"
+                type="checkbox"
+                name="toggle-year"
+                class="switch"
+              />
+              <label for="toggle-year">作成年を表示</label>
+            </div>
+          </div>
+        </form>
+
+        <p>共有URL:</p>
+        <pre id="url-form" class="mb-5"></pre>
+        <hr />
+
+        <div id="license-boxes"></div>
+        <div id="html-boxes" style="display: none"></div>
+        <div id="error-container"></div>
+
+        <footer class="mt-5">
+          <p>
+            <a href="https://crom.avn.sh/" target="_blank" rel="noopener">Powered by Crom</a>
+          </p>
+        </footer>
+      </div>
+    </section>
+
+    <script>
+      // Constants
+      const API_ENDPOINT = 'https://api.crom.avn.sh/graphql';
+      const DEFAULT_WIKI = 'http://scp-jp.wikidot.com/';
+      const MAX_URL_GENERATIONS = 5;
+
+      const scpBranches = {
+        cn: "http://scp-wiki-cn.wikidot.com/",
+        cs: "http://scp-cs.wikidot.com/",
+        en: "http://scp-wiki.wikidot.com/",
+        fr: "http://fondationscp.wikidot.com/",
+        de: "http://scp-wiki-de.wikidot.com/",
+        int: "http://scp-int.wikidot.com/",
+        it: "http://fondazionescp.wikidot.com/",
+        jp: "http://scp-jp.wikidot.com/",
+        ko: "http://scpko.wikidot.com/",
+        pl: "http://scp-pl.wikidot.com/",
+        pt: "http://scp-pt-br.wikidot.com/",
+        ru: "http://scp-ru.wikidot.com/",
+        es: "http://lafundacionscp.wikidot.com/",
+        th: "http://scp-th.wikidot.com/",
+        ua: "http://scp-ukrainian.wikidot.com/",
+        zh: "http://scp-zh-tr.wikidot.com/",
+        vn: "http://scp-vn.wikidot.com/",
+        el: "http://scp-el.wikidot.com/",
+        id: "http://scp-id.wikidot.com/",
+        nd: "http://scp-nd.wikidot.com/",
+        tr: "http://scp-tr.wikidot.com/",
+      };
+
+      const SEARCH_QUERY = `
+        query Search($url: URL!) {
+          page(url: $url) {
+            url
+            wikidotInfo {
+              title
+              createdAt
+              source
+              tags
+            }
+            alternateTitles {
+              title
+            }
+            attributions {
+              user {
+                name
+              }
+              type
+            }
+            adultContentPage {
+              url
+            }
+            adultSplashPage {
+              url
+            }
+            translations {
+              url
+              wikidotInfo {
+                title
+                createdAt
+              }
+              alternateTitles {
+                title
+              }
+              attributions {
+                user {
+                  name
+                }
+                type
+              }
+              adultContentPage {
+                url
+              }
+              adultSplashPage {
+                url
+              }
+            }
+            translationOf {
+              url
+              wikidotInfo {
+                title
+                createdAt
+              }
+              alternateTitles {
+                title
+              }
+              attributions {
+                user {
+                  name
+                }
+                type
+              }
+              adultContentPage {
+                url
+              }
+              adultSplashPage {
+                url
+              }
+              translations {
+                url
+                wikidotInfo {
+                  title
+                  createdAt
+                }
+                alternateTitles {
+                  title
+                }
+                attributions {
+                  user {
+                    name
+                  }
+                  type
+                }
+                adultContentPage {
+                  url
+                }
+                adultSplashPage {
+                  url
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      const setupEventListeners = () => {
+        document.getElementById('license-form').addEventListener('submit', handleFormSubmit);
+        document.getElementById('show-html').addEventListener('click', () => toggleView('html'));
+        document.getElementById('show-rich-text').addEventListener('click', () => toggleView('text'));
+        document.getElementById('toggle-original').addEventListener('click', () => {
+          document.getElementById('license-form').dispatchEvent(new Event('submit'));
+        });
+        document.getElementById('gen-url').addEventListener('click', generateUrl);
+      };
+
+      const normalizeUrl = (url) => {
+        url = url.trim().toLowerCase();
+        
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+          url = DEFAULT_WIKI + url;
+        }
+
+        url = url.replace('https://', 'http://');
+
+        try {
+          const urlObj = new URL(url);
+          const path = urlObj.pathname.split('/')[1];
+          
+          let baseUrl = DEFAULT_WIKI;
+          const domain = urlObj.hostname;
+          
+          for (const [_, branchUrl] of Object.entries(scpBranches)) {
+            if (branchUrl.includes(domain)) {
+              baseUrl = branchUrl;
+              break;
+            }
+          }
+
+          return baseUrl + path;
+        } catch (error) {
+          console.error('Error parsing URL:', error);
+          return url;
+        }
+      };
+
+      const fetchPageData = async (url) => {
+        const response = await fetch(API_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: SEARCH_QUERY,
+            variables: { url },
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        return await response.json();
+      };
+
+      const selectOriginalTranslation = (page, isTranslation) => {
+        if (!isTranslation || !page.translationOf) return null;
+
+        const allTranslations = [
+          page.translationOf,
+          ...(page.translationOf.translations || [])
+        ].filter(translation =>
+          translation?.wikidotInfo?.title && translation?.attributions
+        );
+
+        if (!allTranslations.length) return null;
+
+        const sortedTranslations = allTranslations.sort((a, b) =>
+          new Date(a.wikidotInfo.createdAt) - new Date(b.wikidotInfo.createdAt)
+        );
+
+        let originalTranslation = sortedTranslations[0];
+
+        const matchingLang = Object.entries(scpBranches)
+          .find(([lang]) => page.wikidotInfo.tags.includes(lang.toLowerCase()));
+        
+        if (matchingLang) {
+          const [_, langUrl] = matchingLang;
+          const matchingTranslation = sortedTranslations.find(t => t.url.startsWith(langUrl));
+          if (matchingTranslation) {
+            originalTranslation = matchingTranslation;
+          }
+        }
+
+        if (new Date(originalTranslation.wikidotInfo.createdAt) > new Date(page.wikidotInfo.createdAt)) {
+          return null;
+        }
+
+        return originalTranslation;
+      };
+
+      const generateLicenseContent = (page, isTranslation, originalTranslation) => {
+        const showOriginal = document.getElementById('toggle-original').checked;
+        let content = '';
+        
+        content += `タイトル: ${escapeHtml(page.wikidotInfo.title)}`;
+        if (page.alternateTitles.length > 0) {
+          content += ` - ${escapeHtml(page.alternateTitles[0].title)}`;
+        }
+        content += '\n';
+
+        if (showOriginal && originalTranslation?.wikidotInfo) {
+          content += `原語版タイトル: ${escapeHtml(originalTranslation.wikidotInfo.title)}`;
+          if (originalTranslation.alternateTitles?.length > 0) {
+            content += ` - ${escapeHtml(originalTranslation.alternateTitles[0].title)}`;
+          }
+          content += '\n';
+        }
+
+        const currentDomain = new URL(page.url).hostname;
+        let isOriginalForBranch = page.translations?.length > 0;
+
+        if (currentDomain === 'scp-jp.wikidot.com') {
+          isOriginalForBranch = page.wikidotInfo.tags.includes('jp');
+        }
+
+        let displayAttributions = page.attributions;
+        if (isTranslation && originalTranslation?.attributions) {
+          const normalizeUsername = name => name?.toLowerCase().replace(/[\s_]/g, '-') || '';
+
+          const originalAuthors = new Set(
+            originalTranslation.attributions
+              .filter(a => a.type === "AUTHOR" || a.type === "SUBMITTER")
+              .map(a => normalizeUsername(a.user?.name))
+          );
+
+          displayAttributions = page.attributions.filter(attr => {
+            if (attr.type === "TRANSLATOR") return true;
+            return !originalAuthors.has(normalizeUsername(attr.user?.name));
+          });
+        }
+        
+        const authorLabel = isOriginalForBranch ? "作者: " : "訳者: ";
+        const authorNames = displayAttributions
+          .map(a => a.user?.name || "Unknown Author")
+          .join(", ");
+        content += `${authorLabel}${authorNames}\n`;
+
+        if (showOriginal) {
+          if (originalTranslation?.attributions) {
+            const originalAuthorNames = originalTranslation.attributions
+              .filter(a => a.type === "AUTHOR" || a.type === "SUBMITTER")
+              .map(a => a.user?.name || "Unknown Author")
+              .join(", ");
+            content += `原語版作者: ${originalAuthorNames}\n`;
+          } else if (isTranslation) {
+            content += `原語版作者: 不明\n※ 元記事削除の可能性あり\n`;
+          }
+        }
+
+        const sourceUrl = page.adultSplashPage?.url || page.url;
+        content += `ソース: <a href='${escapeHtml(sourceUrl)}' target='_blank'>${escapeHtml(sourceUrl)}</a>\n`;
+
+        if (showOriginal && originalTranslation) {
+          const originalSourceUrl = originalTranslation.adultSplashPage?.url || originalTranslation.url;
+          const formattedUrl = originalSourceUrl.replace("scp-ru.wikidot.com", "scpfoundation.net");
+          content += `原語版ソース: <a href='${escapeHtml(formattedUrl)}' target='_blank'>${escapeHtml(formattedUrl)}</a>\n`;
+        }
+
+        const licenseVersion = page.wikidotInfo.source?.includes("credit:cc4") ? "4.0" : "3.0";
+        content += `ライセンス: CC BY-SA ${licenseVersion}\n`;
+
+        if (document.getElementById('toggle-year').checked) {
+          content += `作成年: ${new Date(page.wikidotInfo.createdAt).getFullYear()}\n`;
+          if (originalTranslation?.wikidotInfo) {
+            content += `原語版作成年: ${new Date(originalTranslation.wikidotInfo.createdAt).getFullYear()}\n`;
+          }
+        }
+
+        return content;
+      };
+
+      const createLicenseBox = (page, isTranslation, originalTranslation) => {
+        const box = document.createElement('div');
+        box.className = 'box';
+        box.id = urlToId(extractPathFromUrl(page.url));
+
+        const content = document.createElement('p');
+        content.className = 'license-text';
+        content.innerHTML = generateLicenseContent(page, isTranslation, originalTranslation);
+
+        box.appendChild(content);
+        return box;
+      };
+
+      const handleFormSubmit = async (event) => {
+        event.preventDefault();
+        const input = document.getElementById('license-input').value
+          .split('\n')
+          .filter(Boolean)
+          .map(normalizeUrl);
+
+        const licenseBoxes = document.getElementById('license-boxes');
+        const htmlBoxes = document.getElementById('html-boxes');
+        licenseBoxes.innerHTML = '';
+        htmlBoxes.innerHTML = '';
+
+        for (const url of input) {
+          try {
+            const response = await fetchPageData(url);
+            const page = response.data.page;
+
+            if (!page.wikidotInfo) {
+              showError(`以下の記事は存在しません: <a href='${url}' target='_blank'>${url}</a>`);
+              continue;
+            }
+
+            const isTranslation = page.translationOf !== null;
+            const originalTranslation = selectOriginalTranslation(page, isTranslation);
+            
+            const licenseBox = createLicenseBox(page, isTranslation, originalTranslation);
+            licenseBoxes.appendChild(licenseBox);
+            
+            const htmlBox = document.createElement('div');
+            htmlBox.className = 'box';
+            htmlBox.innerHTML = `<pre>${escapeHtml(licenseBox.textContent)}</pre>`;
+            htmlBoxes.appendChild(htmlBox);
+          } catch (error) {
+            handleError(error);
+          }
+        }
+
+        removeDuplicateBoxes();
+        updateButtonStates();
+      };
+
+      const toggleView = (view) => {
+        const licenseBoxes = document.getElementById('license-boxes');
+        const htmlBoxes = document.getElementById('html-boxes');
+        const showHtmlButton = document.getElementById('show-html');
+        const showRichTextButton = document.getElementById('show-rich-text');
+
+        if (view === 'html') {
+          licenseBoxes.style.display = 'none';
+          htmlBoxes.style.display = 'block';
+          showHtmlButton.disabled = true;
+          showRichTextButton.disabled = false;
+        } else {
+          licenseBoxes.style.display = 'block';
+          htmlBoxes.style.display = 'none';
+          showHtmlButton.disabled = false;
+          showRichTextButton.disabled = true;
+        }
+      };
+
+      const generateUrl = () => {
+        const boxes = Array.from(document.getElementById('license-boxes').children);
+        const ids = boxes.slice(0, MAX_URL_GENERATIONS).map(box => box.id);
+        
+        const urlParams = ids.map((id, index) =>
+          `p${index}_fullname/${id}/p${index}_limit/1/`
+        ).join('');
+
+        const url = `${DEFAULT_WIKI}authorssearch/${urlParams}`;
+        document.getElementById('url-form').textContent = url;
+      };
+
+      const receiveRequest = (url) => {
+        const input = document.getElementById('license-input');
+        const inputArray = [...new Set(input.value.split('\n').filter(Boolean))];
+        
+        if (!inputArray.includes(url)) {
+          inputArray.push(url);
+          input.value = inputArray.join('\n');
+        }
+
+        document.getElementById('license-boxes').innerHTML = '';
+        document.getElementById('license-form').dispatchEvent(new Event('submit'));
+      };
+
+      const extractPathFromUrl = (url) => {
+        try {
+          const urlObj = new URL(url);
+          let path = urlObj.pathname.slice(1);
+          const slashIndex = path.indexOf('/');
+          return slashIndex > -1 ? path.substring(0, slashIndex) : path;
+        } catch (error) {
+          console.error('Error parsing URL:', error);
+          return url;
+        }
+      };
+
+      const urlToId = (url) => url.replace(/[^a-z0-9-]/gi, '_');
+
+      const escapeHtml = (text) => {
+        const map = {
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, m => map[m]);
+      };
+
+      const removeDuplicateBoxes = () => {
+        const boxes = Array.from(document.getElementById('license-boxes').children);
+        const seen = new Set();
+        
+        boxes.forEach(box => {
+          if (seen.has(box.id)) {
+            box.remove();
+          } else {
+            seen.add(box.id);
+          }
+        });
+      };
+
+      const updateButtonStates = () => {
+        document.getElementById('show-html').disabled = false;
+        document.getElementById('show-rich-text').disabled = true;
+      };
+
+      const showError = (message) => {
+        const errorContainer = document.getElementById('error-container');
+        errorContainer.innerHTML = `<h1 class="title">Error:</h1><pre>${escapeHtml(message)}</pre>`;
+      };
+
+      const handleError = (error, source, lineno, colno) => {
+        const errorMessage = `エラーが発生しました:\n${error.message || error}\n` +
+          (source ? `Source: ${source}\n` : '') +
+          (lineno ? `Line: ${lineno}\n` : '') +
+          (colno ? `Column: ${colno}\n` : '');
+        
+        showError(errorMessage);
+      };
+
+      // Initialize
+      window.isMainFrame = true;
+      window.receiveRequest = receiveRequest;
+      window.onerror = handleError;
+      setupEventListeners();
+    </script>
+  </body>
+</html>
