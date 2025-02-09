@@ -394,83 +394,156 @@ SOFTWARE.
         const showOriginal = document.getElementById("toggle-original").checked;
         let content = "";
 
+        // Title section
         content += `タイトル: ${escapeHtml(page.wikidotInfo.title)}`;
         if (page.alternateTitles.length > 0) {
           content += ` - ${escapeHtml(page.alternateTitles[0].title)}`;
         }
         content += "\n";
 
-        if (showOriginal && originalTranslation?.wikidotInfo) {
+        // Helper function to get hostname from URL without protocol
+        const getHostname = (url) => {
+          try {
+            return new URL(url).hostname;
+          } catch (error) {
+            console.error("Error parsing URL:", error);
+            return null;
+          }
+        };
+
+        // Helper function to find the original article
+        const findOriginalArticle = (page) => {
+          if (!page.translationOf) return null;
+
+          const allVersions = [
+            page.translationOf,
+            ...(page.translationOf.translations || []),
+          ].filter((t) => t?.wikidotInfo?.createdAt);
+
+          return allVersions.sort(
+            (a, b) =>
+              new Date(a.wikidotInfo.createdAt) -
+              new Date(b.wikidotInfo.createdAt)
+          )[0];
+        };
+
+        // Get user name helper function
+        const getUserName = (attr) => {
+          if (!attr.user?.name) return "Unknown Author";
+          if (attr.user.name === "Unknown Author") return attr.user.name;
+          return attr.user.name;
+        };
+
+        // Determine article type
+        const currentDomain = getHostname(page.url);
+        const isJpDomain = currentDomain === "scp-jp.wikidot.com";
+        const hasJpTag = page.wikidotInfo.tags.includes("jp");
+
+        // Find the original article and check if current is original
+        const originalArticle = findOriginalArticle(page);
+        const isOriginalArticle = (() => {
+          if (isJpDomain) return hasJpTag;
+
+          if (!originalArticle) {
+            // If no original article is found, check if this page has translations
+            return page.translations?.length > 0;
+          }
+
+          // Check if the current hostname matches the oldest article's hostname
+          const oldestHostname = getHostname(originalArticle.url);
+          return oldestHostname === currentDomain;
+        })();
+
+        if (
+          showOriginal &&
+          !isOriginalArticle &&
+          originalArticle?.wikidotInfo
+        ) {
           content += `原語版タイトル: ${escapeHtml(
-            originalTranslation.wikidotInfo.title
+            originalArticle.wikidotInfo.title
           )}`;
-          if (originalTranslation.alternateTitles?.length > 0) {
+          if (originalArticle.alternateTitles?.length > 0) {
             content += ` - ${escapeHtml(
-              originalTranslation.alternateTitles[0].title
+              originalArticle.alternateTitles[0].title
             )}`;
           }
           content += "\n";
         }
 
-        const currentDomain = new URL(page.url).hostname;
-        let isOriginalForBranch = page.translations?.length > 0;
+        // Handle attribution section
+        if (isOriginalArticle) {
+          // This is an original article
+          const authors = page.attributions
+            .map((attr) => {
+              if (attr.type === "REWRITE") {
+                return `改稿者: ${getUserName(attr)}`;
+              }
+              return getUserName(attr);
+            })
+            .filter(Boolean)
+            .join(", ");
 
-        if (currentDomain === "scp-jp.wikidot.com") {
-          isOriginalForBranch = page.wikidotInfo.tags.includes("jp");
-        }
+          content += `作者: ${authors}\n`;
+        } else {
+          // This is a translation
+          const translators = page.attributions
+            .filter((attr) => {
+              if (isJpDomain && !hasJpTag) {
+                // For JP translations, consider AUTHOR, TRANSLATOR, and SUBMITTER as translators
+                return (
+                  attr.type === "TRANSLATOR" ||
+                  attr.type === "SUBMITTER" ||
+                  attr.type === "AUTHOR"
+                );
+              }
+              // For other translations, only consider TRANSLATOR and SUBMITTER
+              return attr.type === "TRANSLATOR" || attr.type === "SUBMITTER";
+            })
+            .map(getUserName);
 
-        let displayAttributions = page.attributions;
-        if (isTranslation && originalTranslation?.attributions) {
-          const normalizeUsername = (name) =>
-            name?.toLowerCase().replace(/[\s_]/g, "-") || "";
+          // If we have no explicit translators but we have an AUTHOR in a JP translation
+          if (translators.length === 0 && isJpDomain && !hasJpTag) {
+            const authors = page.attributions
+              .filter((attr) => attr.type === "AUTHOR")
+              .map(getUserName);
+            content += `訳者: ${authors.join(", ") || "不明"}\n`;
+          } else {
+            content += `訳者: ${translators.join(", ") || "不明"}\n`;
+          }
 
-          const originalAuthors = new Set(
-            originalTranslation.attributions
-              .filter((a) => a.type === "AUTHOR" || a.type === "SUBMITTER")
-              .map((a) => normalizeUsername(a.user?.name))
-          );
-
-          displayAttributions = page.attributions.filter((attr) => {
-            if (attr.type === "TRANSLATOR") return true;
-            return !originalAuthors.has(normalizeUsername(attr.user?.name));
-          });
-        }
-
-        const authorLabel = isOriginalForBranch ? "作者: " : "訳者: ";
-        const authorNames = displayAttributions
-          .map((a) => a.user?.name || "Unknown Author")
-          .join(", ");
-        content += `${authorLabel}${authorNames}\n`;
-
-        if (showOriginal) {
-          if (originalTranslation?.attributions) {
-            const originalAuthorNames = originalTranslation.attributions
-              .filter((a) => a.type === "AUTHOR" || a.type === "SUBMITTER")
-              .map((a) => a.user?.name || "Unknown Author")
+          if (showOriginal && originalArticle?.attributions) {
+            const originalAuthors = originalArticle.attributions
+              .map((attr) => {
+                if (attr.type === "REWRITE") {
+                  return `改稿者: ${getUserName(attr)}`;
+                }
+                if (attr.type === "AUTHOR" || attr.type === "SUBMITTER") {
+                  return getUserName(attr);
+                }
+                return null;
+              })
+              .filter(Boolean)
               .join(", ");
-            content += `原語版作者: ${originalAuthorNames}\n`;
-          } else if (isTranslation) {
-            content += `原語版作者: 不明\n※ 元記事削除の可能性あり\n`;
+
+            content += `原語版作者: ${originalAuthors}\n`;
           }
         }
 
+        // Source URLs
         const sourceUrl = page.adultSplashPage?.url || page.url;
         content += `ソース: <a href='${escapeHtml(
           sourceUrl
         )}' target='_blank'>${escapeHtml(sourceUrl)}</a>\n`;
 
-        if (showOriginal && originalTranslation) {
+        if (showOriginal && !isOriginalArticle && originalArticle) {
           const originalSourceUrl =
-            originalTranslation.adultSplashPage?.url || originalTranslation.url;
-          const formattedUrl = originalSourceUrl.replace(
-            "scp-ru.wikidot.com",
-            "scpfoundation.net"
-          );
+            originalArticle.adultSplashPage?.url || originalArticle.url;
           content += `原語版ソース: <a href='${escapeHtml(
-            formattedUrl
-          )}' target='_blank'>${escapeHtml(formattedUrl)}</a>\n`;
+            originalSourceUrl
+          )}' target='_blank'>${escapeHtml(originalSourceUrl)}</a>\n`;
         }
 
+        // License and year
         const licenseVersion = page.wikidotInfo.source?.includes("credit:cc4")
           ? "4.0"
           : "3.0";
@@ -480,9 +553,9 @@ SOFTWARE.
           content += `作成年: ${new Date(
             page.wikidotInfo.createdAt
           ).getFullYear()}\n`;
-          if (originalTranslation?.wikidotInfo) {
+          if (!isOriginalArticle && originalArticle?.wikidotInfo) {
             content += `原語版作成年: ${new Date(
-              originalTranslation.wikidotInfo.createdAt
+              originalArticle.wikidotInfo.createdAt
             ).getFullYear()}\n`;
           }
         }
