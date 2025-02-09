@@ -476,7 +476,7 @@ SOFTWARE.
           const authors = page.attributions
             .map((attr) => {
               if (attr.type === "REWRITE") {
-                return `改稿者: ${getUserName(attr)}`;
+                return `${getUserName(attr)}(改稿者)`;
               }
               return getUserName(attr);
             })
@@ -515,7 +515,7 @@ SOFTWARE.
             const originalAuthors = originalArticle.attributions
               .map((attr) => {
                 if (attr.type === "REWRITE") {
-                  return `改稿者: ${getUserName(attr)}`;
+                  return `${getUserName(attr)}(改稿者)`;
                 }
                 if (attr.type === "AUTHOR" || attr.type === "SUBMITTER") {
                   return getUserName(attr);
